@@ -13,6 +13,7 @@ CLAUDE.md
 .claude/
 docs/resource_db.md
 docs/rmon4dev.md
+docs/handoff.md
 
 # Логи
 logs/

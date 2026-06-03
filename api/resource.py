@@ -288,7 +288,7 @@ def _push_resource_daily(counter: dict, days: list[dict]) -> dict:
             _fetch_b_data(counter["serial_number"], day_date)
         )
         rows.append(_resource_sheet_row(
-            day_date.year, day_date.month, day["req_date"],
+            day_date.year, day_date.month, day_date.strftime("%d.%m.%Y"),
             counter, d,
             day["value_start"], day["timestamp_start"],
             day["value_end"], day["timestamp_end"],
