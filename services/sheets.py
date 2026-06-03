@@ -120,6 +120,88 @@ class SheetsService:
             spreadsheet_id, sheet_name, len(rows),
         )
 
+    def insert_rows_top(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+        rows: list[list[Any]],
+        after_header: bool = True,
+    ) -> None:
+        """Insert rows at the top (row 2 by default), shifting existing rows down.
+
+        With after_header=True the block is inserted starting at row 2, leaving
+        the header (row 1) in place. rows are written in the given order, so the
+        first element ends up topmost — pass them newest-first for reverse order.
+        """
+        if not rows:
+            return
+        sheet_id = self._sheet_id(spreadsheet_id, sheet_name)
+        start_index = 1 if after_header else 0  # 0-based row index
+        self._svc.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": [{
+                "insertDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": start_index,
+                        "endIndex": start_index + len(rows),
+                    },
+                    "inheritFromBefore": False,
+                }
+            }]},
+        ).execute()
+        self._svc.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=f"{sheet_name}!A{start_index + 1}",
+            valueInputOption="USER_ENTERED",
+            body={"values": rows},
+        ).execute()
+        logger.info(
+            "sheets insert-top spreadsheet=%s sheet=%s rows=%d",
+            spreadsheet_id, sheet_name, len(rows),
+        )
+
+    def set_columns_datetime_format(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+        col_indices: list[int],
+        pattern: str = "dd.mm.yyyy hh:mm:ss",
+    ) -> None:
+        """Apply a DATE_TIME number format to whole columns (skipping the header row).
+
+        Makes ISO datetime values written with USER_ENTERED display in the given
+        pattern while remaining real date-time values (sortable, right-aligned).
+        Idempotent — safe to call on every sync.
+        """
+        if not col_indices:
+            return
+        sheet_id = self._sheet_id(spreadsheet_id, sheet_name)
+        requests = [
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 1,  # keep header (row 1) untouched
+                        "startColumnIndex": c,
+                        "endColumnIndex": c + 1,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "numberFormat": {"type": "DATE_TIME", "pattern": pattern}
+                        }
+                    },
+                    "fields": "userEnteredFormat.numberFormat",
+                }
+            }
+            for c in col_indices
+        ]
+        self._svc.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": requests},
+        ).execute()
+
     def ensure_header(
         self,
         spreadsheet_id: str,
@@ -153,6 +235,14 @@ class SheetsService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _sheet_id(self, spreadsheet_id: str, sheet_name: str) -> int:
+        """Numeric sheetId of a tab by title (needed for batchUpdate ops)."""
+        meta = self._svc.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        for s in meta.get("sheets", []):
+            if s["properties"]["title"] == sheet_name:
+                return s["properties"]["sheetId"]
+        raise ValueError(f"sheet {sheet_name!r} not found in spreadsheet")
 
     @staticmethod
     def _make_key(row: list[Any], key_cols: list[int]) -> tuple:

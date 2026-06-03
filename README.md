@@ -33,7 +33,8 @@ CounterDash2/
 │
 ├── api/
 │   ├── resource.py           # Blueprint /api/resource — счётчики (MariaDB)
-│   └── moesk.py              # Blueprint /api/moesk   — МОЭСК (MS SQL Server)
+│   ├── moesk.py              # Blueprint /api/moesk   — МОЭСК (MS SQL Server)
+│   └── akron.py              # Blueprint /api/akron   — АКРОН + ЭХО-Р-02 (MariaDB)
 │
 ├── services/
 │   ├── db_mariadb.py         # get_db() — соединение MariaDB через Flask g
@@ -98,6 +99,8 @@ GOOGLE_SHEETS_RESOURCE_ID=          # ID таблицы Google для БД Ре�
 GOOGLE_SHEETS_RESOURCE_SHEET=       # Имя вкладки (все отчёты Ресурс пишутся сюда)
 GOOGLE_SHEETS_MOESK_ID=             # ID таблицы Google для МОЭСК
 GOOGLE_SHEETS_MOESK_SHEET=moesk     # Имя вкладки для МОЭСК
+GOOGLE_SHEETS_AKRON_ID=             # ID отдельной таблицы для АКРОН + ЭХО-Р-02
+GOOGLE_SHEETS_AKRON_SHEET=АКРОН     # Имя вкладки для АКРОН + ЭХО-Р-02
 ```
 
 ---
@@ -414,6 +417,63 @@ with app.app_context():
 
 ---
 
+## REST API — `/api/akron`
+
+Посуточный отчёт по двум счётчикам БД Ресурс (MariaDB) — **АКРОН** и **ЭХО-Р-02** —
+выгружаемый в отдельный лист Google Sheets «бок о бок» (8 столбцов АКРОН + 8 столбцов ЭХО-Р-02).
+Отличия от `/api/resource`:
+
+- серийные номера **без ведущих нулей** в поиске и в выводе;
+- отдельная таблица (`GOOGLE_SHEETS_AKRON_*`);
+- выгрузка **вставкой сверху** (новые сутки — со 2-й строки, сдвигая данные вниз),
+  сортировка обратная (новые сутки сверху);
+- дедуп по дате: повторный запуск идемпотентен (существующие сутки обновляются на месте,
+  новые вставляются блоком сверху).
+
+### GET `/api/akron/daily`
+
+| Параметр | Обязателен | По умолчанию |
+|---|---|---|
+| `akron` | нет | `14331` (серийник счётчика АКРОН) |
+| `ehor` | нет | `9899` (серийник счётчика ЭХО-Р-02) |
+| `date_from` | нет | см. умолчания `/api/resource` |
+| `date_to` | нет | см. умолчания `/api/resource` |
+| `sync` | нет | `n` |
+
+Все дни периода присутствуют (без данных → `"-"`). Период ограничен `DAILY_REPORT_LIMIT`.
+
+**Структура листа (16 столбцов):**
+
+| Столбцы A–H (АКРОН) | Столбцы I–P (ЭХО-Р-02) |
+|---|---|
+| Год, Месяц, Месяц_ИД, Дата показаний, Названия счетчика, Номер счетчика, Показания, За сутки | те же 8 столбцов с суффиксом `(ЭХО-Р-02)` |
+
+- `Показания` — накопительное показание на конец суток (сырое).
+- `За сутки` — дельта к предыдущим суткам.
+- Дедуп-ключ — `Дата показаний` (столбец D).
+
+**Ответ:**
+```json
+{
+  "date_from": "2026-05-28",
+  "date_to": "2026-06-02",
+  "akron": { "serial": "14331", "name": "...", "found": true },
+  "ehor": { "serial": "9899", "name": "...", "found": true },
+  "days": [
+    {
+      "req_date": "2026-06-02",
+      "akron_value": 76547.0, "akron_delta": 8.0,
+      "ehor_value": 158041.5, "ehor_delta": 2.5
+    }
+  ],
+  "sheets_sync": { "appended": 5, "updated": 1 }
+}
+```
+
+Если счётчик не найден — в ответе поле `error` (cron-скрипт расценит это как частичный сбой, rc=2).
+
+---
+
 ## REST API — `/api/moesk`
 
 Счётчики электроэнергии МОЭСК из БД `RMon4Dev` (MS SQL Server).
@@ -554,6 +614,56 @@ systemctl --user daemon-reload
 systemctl --user enable counterdash2
 systemctl --user start counterdash2
 ```
+
+---
+
+## Cron-скрипты (`scripts/`)
+
+Bash-обёртки для периодических задач. Каждая дёргает локальный HTTP-API
+запущенного сервиса (`http://$FLASK_HOST:$FLASK_PORT` из `.env`) — поэтому
+**сервис (systemd + Gunicorn) должен быть запущен** в момент срабатывания cron.
+
+| Скрипт | Задача | Эндпоинт |
+|---|---|---|
+| `cron_resource_daily.sh` | Посуточный отчёт за последние 5 дней (19 счётчиков Ресурс) + синхронизация Google | `GET /api/resource/daily?...&sync=y` |
+| `cron_akron_daily.sh` | Посуточный отчёт АКРОН + ЭХО-Р-02 за последние 5 дней + синхронизация Google (отдельный лист) | `GET /api/akron/daily?...&sync=y` |
+| `cron_akron_prev_month.sh` | Посуточный отчёт АКРОН + ЭХО-Р-02 за весь прошлый месяц + синхронизация Google | `GET /api/akron/daily?...&sync=y` |
+| `cron_resource_consolidate.sh` | Консолидация листа Ресурс: суточные строки старше 6 месяцев → помесячные (`keep_months=6` = текущий + 5 предыдущих) | `POST /api/resource/consolidate` |
+| `cron_moesk_monthly.sh` | Помесячный отчёт за текущий год (6 счётчиков МОЭСК) + синхронизация Google | `GET /api/moesk/monthly?...&sync=y` |
+| `cron_common.sh` | Общие функции (загрузка `.env`, логирование, HTTP-хелперы). Подключается через `source`, отдельно не запускается. |
+
+**Логи:** `logs/cron/<имя>.log`. **Коды возврата:** `0` — успех, `1` — сбой
+транспорта/HTTP, `2` — HTTP 2xx, но в теле ответа есть `"error"` (частичный
+сбой: счётчик не найден или сбой выгрузки в Google).
+
+Списки счётчиков и окна (5 дней / `keep_months=6` / текущий год) зашиты в
+скриптах — править там же.
+
+**Установка в пользовательский crontab** (`crontab -e`):
+
+```cron
+# Уведомления о сбоях cron на почту
+MAILTO=admin@example.com
+
+# Посуточный отчёт Ресурс — ежедневно 06:10
+10 6 * * *   /path/to/CounterDash2/scripts/cron_resource_daily.sh
+
+# Посуточный отчёт АКРОН + ЭХО-Р-02 — ежедневно 06:20
+20 6 * * *   /path/to/CounterDash2/scripts/cron_akron_daily.sh
+
+# Посуточный отчёт АКРОН + ЭХО-Р-02 за прошлый месяц — 1-го числа 05:30
+30 5 1 * *   /path/to/CounterDash2/scripts/cron_akron_prev_month.sh
+
+# Помесячный отчёт МОЭСК — ежедневно 06:40
+40 6 * * *   /path/to/CounterDash2/scripts/cron_moesk_monthly.sh
+
+# Консолидация Ресурс — 1-го числа месяца 03:30
+30 3 1 * *   /path/to/CounterDash2/scripts/cron_resource_consolidate.sh
+```
+
+Скрипты сами читают `.env` и не зависят от рабочего каталога cron — пути
+вычисляются относительно их расположения. Перед первым запуском:
+`chmod +x scripts/*.sh`.
 
 ---
 
