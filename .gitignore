@@ -1,0 +1,56 @@
+# Виртуальное окружение
+.venv/
+venv/
+env/
+
+# Секреты и учётные данные
+.env
+credentials/
+db_explore.py
+
+# Claude Code / служебные файлы (не публиковать)
+CLAUDE.md
+.claude/
+docs/resource_db.md
+docs/rmon4dev.md
+
+# Логи
+logs/
+*.log
+
+# Локальные бэкапы Google Sheets
+backups/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Временные файлы
+*.txt.bak
+out.txt
+err.txt
+run_out.txt
+run_err.txt
+flask_out.txt
+flask_err.txt
