@@ -722,9 +722,37 @@ def _build_sheet_row(device: dict, m: dict) -> list | None:
         _v(m.get("total_end")),                 # Q  Показания конец
         _v(m.get("total_delta")),               # R  Расход, кВт*ч
         _v(m.get("total_consumption_ktt")),     # S  Расход с КТТ и КТН
-        "",                                     # T  Тариф (пусто)
+        "",                                     # T  Тариф — заполняется при синке
         # U  Начисления — добавляется по номеру строки
     ]
+
+
+def _last_recorded_tariffs(data_rows: list[list]) -> tuple[dict[str, str], str]:
+    """Из существующих строк листа собирает последний записанный тариф (столбец T, idx 19).
+
+    Тариф МОЭСК в БД RMon4Dev отсутствует и вносится в лист вручную. Чтобы при
+    повторной выгрузке столбец T не обнулялся, переносим последний уже записанный
+    тариф: по каждому серийнику (макс. по (Год, Месяц_ИД) среди строк с непустым T)
+    плюс общий запасной (последний тариф по всему листу).
+    Возвращает ({серийник: тариф}, последний_общий_тариф).
+    """
+    best: dict[str, tuple[int, int, str]] = {}
+    overall: tuple[int, int, str] | None = None
+    for r in data_rows:
+        tariff = str(r[19]).strip() if len(r) > 19 else ""
+        if not tariff:
+            continue
+        try:
+            ym = (int(r[0]), int(r[2]))
+        except (ValueError, TypeError, IndexError):
+            continue
+        if overall is None or ym > overall[:2]:
+            overall = (ym[0], ym[1], tariff)
+        serial = str(r[11]).strip() if len(r) > 11 else ""
+        if serial and (serial not in best or ym > best[serial][:2]):
+            best[serial] = (ym[0], ym[1], tariff)
+    by_serial = {s: v[2] for s, v in best.items()}
+    return by_serial, (overall[2] if overall else "")
 
 
 def _resort_moesk_sheet(svc, spreadsheet_id: str, sheet_name: str) -> None:
@@ -797,6 +825,12 @@ def _push_moesk_monthly_batch(
     header_rows = 1 if existing else 0
     data_rows = existing[header_rows:]
 
+    # Тариф (T) в БД нет — заполняем из листа, чтобы перевыгрузка не обнуляла
+    # столбец и формула U (=S*T) считала начисления. Для обновляемой строки
+    # сохраняем её собственный записанный тариф (мог быть внесён вручную, либо
+    # это исторический период); для новой — переносим последний известный.
+    tariff_by_serial, last_tariff = _last_recorded_tariffs(data_rows)
+
     key_to_idx: dict[tuple, int] = {
         svc._make_key(r, _MOESK_KEY_COLS): i
         for i, r in enumerate(data_rows)
@@ -807,10 +841,18 @@ def _push_moesk_monthly_batch(
 
     for row in raw_rows:
         key = svc._make_key(row, _MOESK_KEY_COLS)
+        serial = str(row[11]).strip() if len(row) > 11 else ""
         if key in key_to_idx:
-            sheet_row = key_to_idx[key] + header_rows + 1
+            idx = key_to_idx[key]
+            existing_row = data_rows[idx]
+            existing_t = str(existing_row[19]).strip() if len(existing_row) > 19 else ""
+            if len(row) > 19 and str(row[19]).strip() == "":
+                row[19] = existing_t or tariff_by_serial.get(serial, last_tariff)
+            sheet_row = idx + header_rows + 1
             to_update.append((sheet_row, row + [f"=S{sheet_row}*T{sheet_row}"]))
         else:
+            if len(row) > 19 and str(row[19]).strip() == "":
+                row[19] = tariff_by_serial.get(serial, last_tariff)
             to_append.append(row)
 
     start_row = len(data_rows) + header_rows + 1
