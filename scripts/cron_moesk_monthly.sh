@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# cron_moesk_monthly.sh — Задача 3 (БД МОЭСК).
+# cron_moesk_monthly.sh — помесячный отчёт МОЭСК.
 #
-# Помесячный отчёт за текущий год для фиксированного списка счётчиков МОЭСК,
-# с синхронизацией в Google Sheets.
+# Запрашивает два последних завершённых месяца (текущий не включается)
+# и синхронизирует данные в Google Sheets.
 #
-# Эндпоинт: GET /api/moesk/monthly?serial=...&year=<текущий>&sync=y
+# Эндпоинт: GET /api/moesk/monthly?serial=...&months=2&exclude_current=y&sync=y
 # Upsert по ключу (Дата + Номер счётчика + Точка учёта) — повторные запуски
-# идемпотентны; данные текущего/прошедших месяцев обновляются по мере поступления.
+# идемпотентны; данные обновляются по мере поступления.
 #
 # Пример crontab (ежедневно в 06:40):
 #   40 6 * * * /path/to/CounterDash2/scripts/cron_moesk_monthly.sh
@@ -21,14 +21,17 @@ init_base_url
 # Счётчики МОЭСК (6 шт.)
 SERIALS="14741821,14741825,14744249,13201464,14744403,14744408"
 
-YEAR="$(date '+%Y')"
+# Два последних завершённых месяца
+MONTH_1="$(date -d '1 month ago' '+%Y-%m')"
+MONTH_2="$(date -d '2 months ago' '+%Y-%m')"
 
-log "Старт: помесячный отчёт за ${YEAR}, счётчиков=$(printf '%s' "${SERIALS}" | tr ',' '\n' | grep -c .)"
+log "Старт: помесячный отчёт ${MONTH_2}..${MONTH_1}, счётчиков=$(printf '%s' "${SERIALS}" | tr ',' '\n' | grep -c .)"
 
 rc=0
 api_get "/api/moesk/monthly" \
     "serial=${SERIALS}" \
-    "year=${YEAR}" \
+    "months=2" \
+    "exclude_current=y" \
     "sync=y" || rc=$?
 
 if [ "${rc}" -ne 0 ]; then
