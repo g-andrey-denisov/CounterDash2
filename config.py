@@ -14,6 +14,7 @@ class Config:
     LOG_MAX_DAYS = int(os.getenv("LOG_MAX_DAYS", 30))
 
     DAILY_REPORT_LIMIT = int(os.getenv("DAILY_REPORT_LIMIT", 50))
+    MONTHLY_REPORT_LIMIT = int(os.getenv("MONTHLY_REPORT_LIMIT", 24))
 
     MARIADB_HOST = os.getenv("MARIADB_HOST", "127.0.0.1")
     MARIADB_PORT = int(os.getenv("MARIADB_PORT", 3306))

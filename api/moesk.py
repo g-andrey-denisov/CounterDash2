@@ -81,6 +81,15 @@ def _parse_date(param: str | None, fallback: date) -> date:
         return fallback
 
 
+def _add_months(y: int, m: int, n: int) -> tuple[int, int]:
+    total = y * 12 + m - 1 + n
+    return total // 12, total % 12 + 1
+
+
+def _month_count(ym_from: tuple[int, int], ym_to: tuple[int, int]) -> int:
+    return ym_to[0] * 12 + ym_to[1] - ym_from[0] * 12 - ym_from[1] + 1
+
+
 def _normalize_serial(raw: str) -> str:
     """Return serial zfilled to 8, preserving non-numeric serials as-is."""
     s = str(raw).strip()
@@ -509,13 +518,20 @@ _MONTH_EMPTY = {
 }
 
 
-def _monthly_one(device: dict, year: int) -> dict:
+def _monthly_one(
+    device: dict,
+    ym_from: tuple[int, int],
+    ym_to: tuple[int, int],
+) -> dict:
     ld_id = device["IdLogicDevice"]
     kc = _get_kc(device)
     today = date.today()
+    cur_ym = (today.year, today.month)
 
-    dt_from = datetime(year, 1, 1)
-    dt_to = datetime(year + 1, 2, 1)
+    dt_from = datetime(ym_from[0], ym_from[1], 1)
+    next_ym = _add_months(ym_to[0], ym_to[1], 1)
+    dt_to = datetime(next_ym[0], next_ym[1], 1)
+
     rows = _all_in(ld_id, dt_from, dt_to, _CODES_MA)
 
     seen: set[tuple] = set()
@@ -527,28 +543,41 @@ def _monthly_one(device: dict, year: int) -> dict:
             seen.add(key)
             first_by_month[(ts.year, ts.month)][r["code"]] = {"ts": ts, "val": r["val"]}
 
-    year_s = _last_before(ld_id, dt_from, _CODES_MA) or first_by_month.get((year, 1), {})
-    year_e = first_by_month.get((year + 1, 1), {})
-    if not year_e:
-        year_e = _latest(ld_id)
+    # Итоговый период: начало — последний MA+ до ym_from, конец — первый MA+ после ym_to
+    year_s = _last_before(ld_id, dt_from, _CODES_MA) or first_by_month.get(ym_from, {})
+    year_e = first_by_month.get(next_ym, {})
+    latest_cache: dict | None = None
 
-    cur_ym = (today.year, today.month)
+    def _get_latest_cached() -> dict:
+        nonlocal latest_cache
+        if latest_cache is None:
+            latest_cache = _latest(ld_id)
+        return latest_cache
+
+    if not year_e and ym_to >= cur_ym:
+        year_e = _get_latest_cached()
+
     months = []
-    for m in range(1, 13):
-        if date(year, m, 1) > today:
-            months.append({"req_month": m, **_MONTH_EMPTY})
-            continue
-        start_r = first_by_month.get((year, m), {})
-        nm = m % 12 + 1
-        ny = year + (1 if m == 12 else 0)
-        end_r = first_by_month.get((ny, nm), {})
-        if not end_r and (year, m) == cur_ym:
-            end_r = _latest(ld_id)
-        months.append({"req_month": m, **_period_fields(start_r, end_r, kc)})
+    ym = ym_from
+    while ym <= ym_to:
+        y, m = ym
+        if date(y, m, 1) > today:
+            months.append({"req_year": y, "req_month": m, **_MONTH_EMPTY})
+        else:
+            start_r = first_by_month.get(ym, {})
+            end_ym = _add_months(y, m, 1)
+            end_r = first_by_month.get(end_ym, {})
+            if not end_r and ym == cur_ym:
+                end_r = _get_latest_cached()
+            months.append({"req_year": y, "req_month": m, **_period_fields(start_r, end_r, kc)})
+        ym = _add_months(y, m, 1)
 
     return {
         **_device_meta(device),
-        "req_year": year,
+        "year_from": ym_from[0],
+        "month_from": ym_from[1],
+        "year_to": ym_to[0],
+        "month_to": ym_to[1],
         "energy_type": "СУММА",
         **_period_fields(year_s, year_e, kc),
         "months": months,
@@ -656,7 +685,7 @@ def daily():
     return _respond(results, multi)
 
 
-def _build_sheet_row(device: dict, m: dict, year: int) -> list | None:
+def _build_sheet_row(device: dict, m: dict) -> list | None:
     """Собирает строку листа для одного месяца одного устройства (без формулы)."""
     if m.get("total_start") in (None, "-") and m.get("total_end") in (None, "-"):
         return None
@@ -667,6 +696,7 @@ def _build_sheet_row(device: dict, m: dict, year: int) -> list | None:
     props = device.get("props", {})
     ktt = _round(_get_kc(device))
     mn = m["req_month"]
+    year = m["req_year"]
     return [
         year,                                   # A  Год
         f"{mn:02d}-{_MONTH_ABBR[mn]}",          # B  Месяц
@@ -727,15 +757,14 @@ def _resort_moesk_sheet(svc, spreadsheet_id: str, sheet_name: str) -> None:
 
 
 def _push_moesk_monthly_batch(
-    year: int,
     device_months: list[tuple[dict, list[dict]]],
 ) -> dict:
     """Выгружает помесячные строки всех устройств в Google Sheets.
 
-    Строки сортируются по (Месяц_ИД, eso_row) — сначала все устройства
-    за январь, потом за февраль и т.д.
+    Строки сортируются по (Год, Месяц_ИД, eso_row).
     Dedup: Дата(8) + Номер счетчика(11) + Точка учёта(10).
     Столбец U (Начисления) — формула =S{row}*T{row}.
+    После upsert весь лист пересортировывается.
     """
     spreadsheet_id = current_app.config.get("GOOGLE_SHEETS_MOESK_ID", "")
     if not spreadsheet_id:
@@ -746,15 +775,15 @@ def _push_moesk_monthly_batch(
     raw_rows: list[list] = []
     for device, months in device_months:
         for m in months:
-            row = _build_sheet_row(device, m, year)
+            row = _build_sheet_row(device, m)
             if row is not None:
                 raw_rows.append(row)
 
     if not raw_rows:
         return {"appended": 0, "updated": 0}
 
-    # Сортировка: по месяцу (col 2), затем по eso_row (col 3)
-    raw_rows.sort(key=lambda r: (r[2], r[3] if isinstance(r[3], int) else 0))
+    # Сортировка: по году (col 0), месяцу (col 2), eso_row (col 3)
+    raw_rows.sort(key=lambda r: (r[0], r[2], r[3] if isinstance(r[3], int) else 0))
 
     svc = get_sheets_service()
     svc.ensure_header(spreadsheet_id, sheet_name, _MOESK_HEADER)
@@ -800,23 +829,121 @@ def _push_moesk_monthly_batch(
     return {"appended": len(rows_with_formula), "updated": len(to_update)}
 
 
+def _parse_monthly_range(args, today: date, limit: int) -> tuple[tuple[int, int], tuple[int, int], bool]:
+    """Разбирает параметры запроса и возвращает (ym_from, ym_to, capped).
+
+    Режимы (приоритет сверху вниз):
+      year_from / month_from [year_to / month_to]  — диапазон год+месяц
+      date_from / date_to                          — диапазон дат (обрезается до месяцев)
+      months=N [exclude_current=y]                 — последние N месяцев
+      year=YYYY [year_mode=ytd|ytd_excl|full]      — отчёт по году
+      (ничего)                                     — текущий месяц
+    """
+    cur_ym = (today.year, today.month)
+
+    year_from_s  = args.get("year_from",  "").strip()
+    month_from_s = args.get("month_from", "").strip()
+    year_to_s    = args.get("year_to",    "").strip()
+    month_to_s   = args.get("month_to",   "").strip()
+    date_from_s  = args.get("date_from",  "").strip()
+    date_to_s    = args.get("date_to",    "").strip()
+    months_s     = args.get("months",     "").strip()
+    year_s       = args.get("year",       "").strip()
+
+    exclude_current = args.get("exclude_current", "n").strip().lower() in ("y", "yes", "true", "1")
+    year_mode       = args.get("year_mode", "ytd").strip().lower()  # ytd | ytd_excl | full
+
+    if year_from_s or month_from_s:
+        yf = int(year_from_s)  if year_from_s  else cur_ym[0]
+        mf = int(month_from_s) if month_from_s else 1
+        yt = int(year_to_s)    if year_to_s    else cur_ym[0]
+        mt = int(month_to_s)   if month_to_s   else cur_ym[1]
+        ym_from, ym_to = (yf, mf), (yt, mt)
+
+    elif date_from_s or date_to_s:
+        if date_from_s:
+            d = date.fromisoformat(date_from_s)
+            ym_from = (d.year, d.month)
+        else:
+            ym_from = cur_ym
+        if date_to_s:
+            d = date.fromisoformat(date_to_s)
+            ym_to = (d.year, d.month)
+        else:
+            ym_to = cur_ym
+
+    elif months_s:
+        n = int(months_s)
+        if n < 1:
+            raise ValueError("months должен быть >= 1")
+        end_ym = _add_months(cur_ym[0], cur_ym[1], -1) if exclude_current else cur_ym
+        ym_to   = end_ym
+        ym_from = _add_months(end_ym[0], end_ym[1], -(n - 1))
+
+    elif year_s:
+        y = int(year_s)
+        ym_from = (y, 1)
+        if year_mode == "full":
+            ym_to = (y, 12)
+        elif year_mode == "ytd_excl":
+            if y < today.year:
+                ym_to = (y, 12)
+            elif y == today.year:
+                ym_to = _add_months(cur_ym[0], cur_ym[1], -1) if cur_ym[1] > 1 else ym_from
+            else:
+                ym_to = ym_from
+        else:  # ytd (default)
+            if y < today.year:
+                ym_to = (y, 12)
+            elif y == today.year:
+                ym_to = cur_ym
+            else:
+                ym_to = ym_from  # будущий год — только первый месяц пустым
+
+    else:
+        ym_from = ym_to = cur_ym
+
+    if ym_from > ym_to:
+        ym_from, ym_to = ym_to, ym_from
+
+    count = _month_count(ym_from, ym_to)
+    capped = count > limit
+    if capped:
+        ym_from = _add_months(ym_to[0], ym_to[1], -(limit - 1))
+
+    return ym_from, ym_to, capped
+
+
 @bp.route("/monthly")
 def monthly():
     """
-    GET /api/moesk/monthly?serial=<SN>[,<SN2>...][&year=YYYY][&sync=y]
+    GET /api/moesk/monthly?serial=<SN>[,<SN2>...][&sync=y][&<range_params>]
 
-    Помесячный отчёт за год. Все 12 месяцев присутствуют.
+    Помесячный отчёт. Все месяцы диапазона присутствуют.
     Несколько серийников → массив, отсортированный по order_num.
     sync=y — выгружает данные в Google Sheets.
+
+    Параметры диапазона (приоритет сверху вниз):
+      year_from, month_from [year_to, month_to]  — диапазон год+месяц
+      date_from [date_to]                        — диапазон дат
+      months=N [exclude_current=y]               — последние N месяцев
+      year=YYYY [year_mode=ytd|ytd_excl|full]    — отчёт по году
+      (ничего)                                   — текущий месяц
+    Максимум MONTHLY_REPORT_LIMIT месяцев (дефолт 24, в конфиге).
     """
     raw = request.args.get("serial", "").strip()
     if not raw:
         return jsonify({"error": "Параметр 'serial' обязателен"}), 400
-    try:
-        year = int(request.args.get("year", date.today().year))
-    except (ValueError, TypeError):
-        return jsonify({"error": "Параметр 'year' должен быть числом"}), 400
+
+    today = date.today()
+    limit: int = current_app.config.get("MONTHLY_REPORT_LIMIT", 24)
     sync = request.args.get("sync", "n").strip().lower() in ("y", "yes", "true", "1")
+
+    try:
+        ym_from, ym_to, capped = _parse_monthly_range(request.args, today, limit)
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": f"Ошибка в параметрах: {exc}"}), 400
+
     serials = _parse_serials(raw)
     multi = len(serials) > 1
 
@@ -829,14 +956,16 @@ def monthly():
             if not multi:
                 return jsonify({"error": f"Счётчик '{s}' не найден"}), 404
             continue
-        r = _monthly_one(device, year)
+        r = _monthly_one(device, ym_from, ym_to)
+        if capped:
+            r["note"] = f"Период ограничен до {limit} месяцев"
         results.append(r)
         if sync:
             device_months.append((device, r["months"]))
 
     if sync and device_months:
         try:
-            sync_stat = _push_moesk_monthly_batch(year, device_months)
+            sync_stat = _push_moesk_monthly_batch(device_months)
         except Exception as exc:
             log.error("moesk monthly sheets sync: %s", exc)
             sync_stat = {"error": str(exc)}
