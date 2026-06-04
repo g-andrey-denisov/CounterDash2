@@ -530,7 +530,12 @@ def _monthly_one(
 
     dt_from = datetime(ym_from[0], ym_from[1], 1)
     next_ym = _add_months(ym_to[0], ym_to[1], 1)
-    dt_to = datetime(next_ym[0], next_ym[1], 1)
+    # Конец завершённого месяца M — это MA+ снимок на 1-е число M+1 (00:00:00).
+    # Для последнего месяца диапазона (ym_to) этот снимок лежит ровно на границе
+    # next_ym, поэтому окно расширяем ещё на месяц, иначе условие Datetime < dt_to
+    # отрезало бы его и столбцы «конец/расход» оставались бы пустыми.
+    after_ym = _add_months(next_ym[0], next_ym[1], 1)
+    dt_to = datetime(after_ym[0], after_ym[1], 1)
 
     rows = _all_in(ld_id, dt_from, dt_to, _CODES_MA)
 
