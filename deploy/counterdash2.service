@@ -1,0 +1,22 @@
+[Unit]
+Description=CounterDash2 (Flask + Gunicorn)
+After=network.target
+
+[Service]
+WorkingDirectory=/path/to/CounterDash2
+EnvironmentFile=/path/to/CounterDash2/.env
+# --reload: воркеры перезапускаются при правке любого загруженного .py
+#           (app.py, config.py, api/*, services/*).
+# --reload-extra-file .env: добавляет .env в наблюдение; config.py зовёт
+#           load_dotenv(override=True) при импорте, поэтому при перезагрузке
+#           воркера новые значения .env перечитываются автоматически.
+ExecStart=/path/to/CounterDash2/.venv/bin/gunicorn \
+    --workers 2 \
+    --bind 127.0.0.1:5000 \
+    --reload \
+    --reload-extra-file /path/to/CounterDash2/.env \
+    "app:create_app()"
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

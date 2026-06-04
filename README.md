@@ -610,20 +610,24 @@ FileUsage   = 1
 
 В `.env` на Linux: `MSSQL_DRIVER=FreeTDS`
 
-**Systemd-сервис** `~/.config/systemd/user/counterdash2.service`:
+**Systemd-сервис** — готовый юнит в [`deploy/`](deploy/) (см. [`deploy/README.md`](deploy/README.md)).
+Кладётся в `~/.config/systemd/user/counterdash2.service`:
+
 ```ini
 [Unit]
-Description=CounterDash2
+Description=CounterDash2 (Flask + Gunicorn)
 After=network.target
 
 [Service]
 WorkingDirectory=/path/to/CounterDash2
+EnvironmentFile=/path/to/CounterDash2/.env
 ExecStart=/path/to/CounterDash2/.venv/bin/gunicorn \
     --workers 2 \
     --bind 127.0.0.1:5000 \
+    --reload \
+    --reload-extra-file /path/to/CounterDash2/.env \
     "app:create_app()"
 Restart=on-failure
-EnvironmentFile=/path/to/CounterDash2/.env
 
 [Install]
 WantedBy=default.target
@@ -631,9 +635,17 @@ WantedBy=default.target
 
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable counterdash2
-systemctl --user start counterdash2
+systemctl --user enable --now counterdash2
 ```
+
+**Авто-перезагрузка.** systemd сам по себе не перезапускает приложение при
+изменении `.env`/исходников (`EnvironmentFile` и `load_dotenv()` читаются лишь при
+старте). Флаг `--reload` заставляет Gunicorn следить за всеми загруженными
+Python-модулями (`app.py`, `config.py`, `api/*`, `services/*`) и перезапускать
+воркеры при правке, а `--reload-extra-file .env` добавляет в наблюдение `.env`
+(перечитывается через `load_dotenv(override=True)`). Cron-скрипты `scripts/*.sh`
+рестарта не требуют — cron читает их заново при каждом запуске. Подробности и
+проверка — в [`deploy/README.md`](deploy/README.md).
 
 ---
 
