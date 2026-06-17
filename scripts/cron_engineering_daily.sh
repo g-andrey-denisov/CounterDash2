@@ -26,7 +26,7 @@ load_env
 init_base_url
 
 YEAR="${1:-$(date -d '1 day ago' '+%Y')}"
-MONTH="${2:-$(date -d '1 day ago' '%-m')}"
+MONTH="${2:-$((10#$(date -d '1 day ago' '+%m')))}"
 
 log "Старт: инженерия year=${YEAR} month=${MONTH}"
 
