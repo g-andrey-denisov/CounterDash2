@@ -7,7 +7,7 @@
 # + 5 предыдущих остаются нетронутыми («последние 5 месяцев, не считая текущего»);
 # всё, что старше — сворачивается в одну помесячную строку на счётчик/месяц.
 #
-# Эндпоинт: POST /api/resource/consolidate {"keep_months": 6, "remove_empty_rows": true}
+# Эндпоинт: POST /api/v1/resource/consolidate {"keep_months": 6, "remove_empty_rows": true}
 #
 # Запускать реже суточного отчёта (консолидация необратима для суточных строк,
 # но Google Sheets бэкапятся — см. services/sheets_backup.py).
@@ -27,7 +27,7 @@ BODY="{\"keep_months\": ${KEEP_MONTHS}, \"remove_empty_rows\": true}"
 log "Старт: консолидация, keep_months=${KEEP_MONTHS}"
 
 rc=0
-api_post "/api/resource/consolidate" "${BODY}" || rc=$?
+api_post "/api/v1/resource/consolidate" "${BODY}" || rc=$?
 
 if [ "${rc}" -ne 0 ]; then
     log "ЗАВЕРШЕНО С ОШИБКОЙ (rc=${rc})"

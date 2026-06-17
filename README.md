@@ -32,9 +32,11 @@ CounterDash2/
 │   └── google_sa.json        # Google Service Account JSON
 │
 ├── api/
-│   ├── resource.py           # Blueprint /api/resource — счётчики (MariaDB)
-│   ├── moesk.py              # Blueprint /api/moesk   — МОЭСК (MS SQL Server)
-│   └── akron.py              # Blueprint /api/akron   — АКРОН + ЭХО-Р-02 (MariaDB)
+│   ├── resource.py           # Blueprint /api/v1/resource    — счётчики (MariaDB)
+│   ├── moesk.py              # Blueprint /api/v1/moesk       — МОЭСК (MS SQL Server)
+│   ├── akron.py              # Blueprint /api/v1/akron       — АКРОН + ЭХО-Р-02 (MariaDB)
+│   ├── backup.py             # Blueprint /api/v1/backup      — бэкап Google Sheets
+│   └── engineering.py        # Blueprint /api/v1/engineering — таблица «Инженерия»
 │
 ├── services/
 │   ├── db_mariadb.py         # get_db() — соединение MariaDB через Flask g
@@ -102,11 +104,47 @@ GOOGLE_SHEETS_MOESK_ID=             # ID таблицы Google для МОЭСК
 GOOGLE_SHEETS_MOESK_SHEET=moesk     # Имя вкладки для МОЭСК
 GOOGLE_SHEETS_AKRON_ID=             # ID отдельной таблицы для АКРОН + ЭХО-Р-02
 GOOGLE_SHEETS_AKRON_SHEET=АКРОН     # Имя вкладки для АКРОН + ЭХО-Р-02
+GOOGLE_SHEETS_ENGINEERING_ID=       # ID таблицы «Инженерия» (посуточные по листам-месяцам)
 ```
 
 ---
 
-## REST API — `/api/resource`
+## REST API — `/api/v1/engineering`
+
+Запись посуточного расхода в таблицу «Инженерия» (Google Sheets).
+
+Листы называются по месяцам: `«{Месяц} {Год}»` (напр. `«Июнь 2026»`).
+Если нужного листа нет — создаётся копированием последнего существующего.
+Данные: `SUM(ConsumptionDelta) × КТР` (b_count) за каждые сутки.
+Серийные номера счётчиков читаются из столбца B листа (regex `\d{6,}`).
+Дни позже вчерашнего не заполняются.
+
+### GET `/api/v1/engineering/daily`
+
+| Параметр | Обязателен | По умолчанию |
+|---|---|---|
+| `year` | нет | текущий год |
+| `month` | нет | текущий месяц |
+| `sync` | нет | `n` |
+
+**Ответ (sync=y):**
+```json
+{
+  "year": 2026, "month": 6, "month_name": "Июнь",
+  "target_sheet": "Июнь 2026",
+  "sheets_sync": {
+    "sheet_name": "Июнь 2026",
+    "sheet_created": false,
+    "rows_processed": 19,
+    "rows_no_counter": 0,
+    "cells_written": 304
+  }
+}
+```
+
+---
+
+## REST API — `/api/v1/resource`
 
 Все ответы — JSON в UTF-8. Значения показаний округлены до 1 знака.
 Если данных нет — поле возвращает строку `"-"`.
@@ -657,11 +695,12 @@ Bash-обёртки для периодических задач. Каждая �
 
 | Скрипт | Задача | Эндпоинт |
 |---|---|---|
-| `cron_resource_daily.sh` | Посуточный отчёт за последние 4 дня до вчерашнего (20 счётчиков Ресурс) + синхронизация Google | `GET /api/resource/daily?...&sync=y` |
-| `cron_akron_daily.sh` | Посуточный отчёт АКРОН + ЭХО-Р-02 за последние 5 дней + синхронизация Google (отдельный лист) | `GET /api/akron/daily?...&sync=y` |
-| `cron_akron_prev_month.sh` | Посуточный отчёт АКРОН + ЭХО-Р-02 за весь прошлый месяц + синхронизация Google | `GET /api/akron/daily?...&sync=y` |
-| `cron_resource_consolidate.sh` | Консолидация листа Ресурс: суточные строки старше 6 месяцев → помесячные (`keep_months=6` = текущий + 5 предыдущих) | `POST /api/resource/consolidate` |
-| `cron_moesk_monthly.sh` | Помесячный отчёт за текущий год (6 счётчиков МОЭСК) + синхронизация Google | `GET /api/moesk/monthly?...&sync=y` |
+| `cron_resource_daily.sh` | Посуточный отчёт за последние 4 дня до вчерашнего (20 счётчиков Ресурс) + синхронизация Google | `GET /api/v1/resource/daily?...&sync=y` |
+| `cron_akron_daily.sh` | Посуточный отчёт АКРОН + ЭХО-Р-02 за последние 5 дней + синхронизация Google (отдельный лист) | `GET /api/v1/akron/daily?...&sync=y` |
+| `cron_akron_prev_month.sh` | Посуточный отчёт АКРОН + ЭХО-Р-02 за весь прошлый месяц + синхронизация Google | `GET /api/v1/akron/daily?...&sync=y` |
+| `cron_resource_consolidate.sh` | Консолидация листа Ресурс: суточные строки старше 6 месяцев → помесячные (`keep_months=6` = текущий + 5 предыдущих) | `POST /api/v1/resource/consolidate` |
+| `cron_moesk_monthly.sh` | Помесячный отчёт за текущий год (6 счётчиков МОЭСК) + синхронизация Google | `GET /api/v1/moesk/monthly?...&sync=y` |
+| `cron_engineering_daily.sh` | Посуточный расход в таблицу «Инженерия» за месяц вчерашнего дня (или `YYYY M` аргументами) | `GET /api/v1/engineering/daily?...&sync=y` |
 | `cron_common.sh` | Общие функции (загрузка `.env`, логирование, HTTP-хелперы). Подключается через `source`, отдельно не запускается. |
 
 **Логи:** `logs/cron/<имя>.log`. **Коды возврата:** `0` — успех, `1` — сбой
@@ -691,6 +730,9 @@ MAILTO=admin@example.com
 
 # Консолидация Ресурс — 1-го числа месяца 03:30
 30 3 1 * *   /path/to/CounterDash2/scripts/cron_resource_consolidate.sh
+
+# Инженерия — ежедневно в 07:00 (месяц вчерашнего дня)
+0 7 * * *    /path/to/CounterDash2/scripts/cron_engineering_daily.sh
 ```
 
 Скрипты сами читают `.env` и не зависят от рабочего каталога cron — пути

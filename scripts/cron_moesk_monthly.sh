@@ -5,7 +5,7 @@
 # Запрашивает два последних завершённых месяца (текущий не включается)
 # и синхронизирует данные в Google Sheets.
 #
-# Эндпоинт: GET /api/moesk/monthly?serial=...&months=2&exclude_current=y&sync=y
+# Эндпоинт: GET /api/v1/moesk/monthly?serial=...&months=2&exclude_current=y&sync=y
 # Upsert по ключу (Дата + Номер счётчика + Точка учёта) — повторные запуски
 # идемпотентны; данные обновляются по мере поступления.
 #
@@ -28,7 +28,7 @@ MONTH_2="$(date -d '2 months ago' '+%Y-%m')"
 log "Старт: помесячный отчёт ${MONTH_2}..${MONTH_1}, счётчиков=$(printf '%s' "${SERIALS}" | tr ',' '\n' | grep -c .)"
 
 rc=0
-api_get "/api/moesk/monthly" \
+api_get "/api/v1/moesk/monthly" \
     "serial=${SERIALS}" \
     "months=2" \
     "exclude_current=y" \

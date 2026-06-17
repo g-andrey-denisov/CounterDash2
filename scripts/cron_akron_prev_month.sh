@@ -6,7 +6,7 @@
 # (GOOGLE_SHEETS_AKRON_*). Окно — весь предыдущий календарный месяц
 # (с 1-го по последнее число), с синхронизацией.
 #
-# Эндпоинт: GET /api/akron/daily?date_from=...&date_to=...&sync=y
+# Эндпоинт: GET /api/v1/akron/daily?date_from=...&date_to=...&sync=y
 # Дедуп по дате — повторные запуски идемпотентны (существующие сутки
 # обновляются, новые вставляются сверху). Строки с датой < 01.11.2024
 # не трогаются (заморожённая история).
@@ -31,7 +31,7 @@ DATE_FROM="$(date -d "${DATE_TO}" '+%Y-%m-01')"        # первый день �
 log "Старт: посуточный отчёт АКРОН+ЭХО-Р за прошлый месяц ${DATE_FROM}..${DATE_TO}"
 
 rc=0
-api_get "/api/akron/daily" \
+api_get "/api/v1/akron/daily" \
     "date_from=${DATE_FROM}" \
     "date_to=${DATE_TO}" \
     "sync=y" || rc=$?

@@ -8,7 +8,7 @@ from flask import Blueprint, current_app, jsonify, request
 from services.db_mssql import get_db
 from services.sheets import get_sheets_service
 
-bp = Blueprint("moesk", __name__, url_prefix="/api/moesk")
+bp = Blueprint("moesk", __name__, url_prefix="/api/v1/moesk")
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------

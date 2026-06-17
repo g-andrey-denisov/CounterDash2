@@ -5,7 +5,7 @@ from flask import Blueprint, current_app, jsonify, request
 from services import sheets_backup
 from services.sheets import get_sheets_service
 
-bp = Blueprint("backup", __name__, url_prefix="/api/backup")
+bp = Blueprint("backup", __name__, url_prefix="/api/v1/backup")
 
 
 @bp.get("/list")

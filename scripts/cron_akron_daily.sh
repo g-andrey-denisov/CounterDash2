@@ -5,7 +5,7 @@
 # Два счётчика выводятся бок о бок в отдельный лист Google Sheets
 # (GOOGLE_SHEETS_AKRON_*). Окно — последние 5 дней, с синхронизацией.
 #
-# Эндпоинт: GET /api/akron/daily?date_from=...&date_to=...&sync=y
+# Эндпоинт: GET /api/v1/akron/daily?date_from=...&date_to=...&sync=y
 # Дедуп по дате — повторные запуски идемпотентны (существующие сутки
 # обновляются, новые вставляются сверху).
 #
@@ -28,7 +28,7 @@ DATE_FROM="$(date -d '4 days ago' '+%F')"
 log "Старт: посуточный отчёт АКРОН+ЭХО-Р ${DATE_FROM}..${DATE_TO}"
 
 rc=0
-api_get "/api/akron/daily" \
+api_get "/api/v1/akron/daily" \
     "date_from=${DATE_FROM}" \
     "date_to=${DATE_TO}" \
     "sync=y" || rc=$?

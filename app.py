@@ -7,6 +7,7 @@ from api.resource import bp as resource_bp
 from api.moesk import bp as moesk_bp
 from api.akron import bp as akron_bp
 from api.backup import bp as backup_bp
+from api.engineering import bp as engineering_bp
 
 
 def create_app() -> Flask:
@@ -23,6 +24,7 @@ def create_app() -> Flask:
     app.register_blueprint(moesk_bp)
     app.register_blueprint(akron_bp)
     app.register_blueprint(backup_bp)
+    app.register_blueprint(engineering_bp)
 
     return app
 

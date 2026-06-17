@@ -6,7 +6,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from services.db_mariadb import get_db
 
-bp = Blueprint("resource", __name__, url_prefix="/api/resource")
+bp = Blueprint("resource", __name__, url_prefix="/api/v1/resource")
 logger = logging.getLogger(__name__)
 
 _COUNTER_FIELDS = """

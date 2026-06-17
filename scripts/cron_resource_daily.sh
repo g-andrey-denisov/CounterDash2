@@ -5,7 +5,7 @@
 # Посуточный отчёт за последние 4 дня (вчера и 3 предыдущих, сегодня не включается)
 # для фиксированного списка счётчиков, с синхронизацией в Google Sheets.
 #
-# Эндпоинт: GET /api/resource/daily?serial=...&date_from=...&date_to=...&sync=y
+# Эндпоинт: GET /api/v1/resource/daily?serial=...&date_from=...&date_to=...&sync=y
 # Upsert по ключу (Год + Дата + Номер счётчика) — повторные запуски идемпотентны.
 #
 # Пример crontab (ежедневно в 06:10):
@@ -27,7 +27,7 @@ DATE_FROM="$(date -d '4 days ago' '+%F')"
 log "Старт: посуточный отчёт ${DATE_FROM}..${DATE_TO}, счётчиков=$(printf '%s' "${SERIALS}" | tr ',' '\n' | grep -c .)"
 
 rc=0
-api_get "/api/resource/daily" \
+api_get "/api/v1/resource/daily" \
     "serial=${SERIALS}" \
     "date_from=${DATE_FROM}" \
     "date_to=${DATE_TO}" \

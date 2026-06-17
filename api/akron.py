@@ -17,7 +17,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from services.db_mariadb import get_db
 
-bp = Blueprint("akron", __name__, url_prefix="/api/akron")
+bp = Blueprint("akron", __name__, url_prefix="/api/v1/akron")
 logger = logging.getLogger(__name__)
 
 # Серийники по умолчанию (тестовые/боевые) — переопределяются query-параметрами.
