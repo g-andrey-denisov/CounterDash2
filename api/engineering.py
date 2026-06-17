@@ -9,7 +9,7 @@
 
 Источник данных: таблица consumption БД Ресурс (MariaDB).
 Пишется SUM(ConsumptionDelta) × КТР (b_count) за сутки. Дни позже вчера — пустые.
-Числовой формат ячеек нового листа: до 2 знаков после запятой; целые — без дробной части.
+Значения округляются до 2 знаков после запятой (round(x, 2)).
 """
 
 import logging
@@ -120,10 +120,9 @@ def _fetch_ktr(serial: str) -> int:
         return int(row["Ktr"]) if row else 1
 
 
-def _cell_val(raw: float, ktr: int) -> float | int:
-    """Расход × КТР, округлённый до 2 знаков. Целые числа — без дробной части."""
-    v = round(raw * ktr, 2)
-    return int(v) if v == int(v) else v
+def _cell_val(raw: float, ktr: int) -> float:
+    """Расход × КТР, округлённый до 2 знаков."""
+    return round(raw * ktr, 2)
 
 
 def _fetch_readings_by_day(
@@ -243,32 +242,7 @@ def _duplicate_and_prepare(
         body={"valueInputOption": "USER_ENTERED", "data": data_entries},
     ).execute()
 
-    # Формат 0.## — до 2 знаков после запятой, незначащие нули не показываются
-    format_requests = [
-        {
-            "repeatCell": {
-                "range": {
-                    "sheetId": new_sheet_id,
-                    "startRowIndex": _DATA_ROW_START - 1,  # 0-based
-                    "endRowIndex": _DATA_ROW_END,
-                    "startColumnIndex": week_col,
-                    "endColumnIndex": week_col + 7,
-                },
-                "cell": {
-                    "userEnteredFormat": {
-                        "numberFormat": {"type": "NUMBER", "pattern": "0.##"},
-                    }
-                },
-                "fields": "userEnteredFormat.numberFormat",
-            }
-        }
-        for week_col in _WEEK_START_COLS
-    ]
-    svc._svc.spreadsheets().batchUpdate(
-        spreadsheetId=spreadsheet_id,
-        body={"requests": format_requests},
-    ).execute()
-    logger.info("engineering: лист %r подготовлен (D1 + строка 2 + очистка + формат)", new_title)
+    logger.info("engineering: лист %r подготовлен (D1 + строка 2 + очистка)", new_title)
 
 
 def _read_col_b(svc, spreadsheet_id: str, sheet_name: str) -> list[tuple[int, str]]:
